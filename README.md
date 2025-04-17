@@ -22,9 +22,17 @@ A Git hook for macOS that automatically generates detailed, well-structured comm
    ```bash
    git clone https://github.com/your-username/auto-commit-ai.git
    ```
+
+   ```bash
+   git@github.com:ArtCC/auto-commit-ai.git
+   ```
 2. **Copy the hook** into your repo’s hooks folder:
    ```bash
    cp auto-commit-ai/prepare-commit-msg .git/hooks/prepare-commit-msg
+   ```
+
+   ```bash
+   rm -rf auto-commit-ai
    ```
 3. **Make it executable**:
    ```bash
