@@ -121,7 +121,7 @@ struct ChatResponse: Codable { let choices: [Choice] }
 
 let systemPrompt = Message(
     role: "system",
-    content: "You are an assistant that summarizes code changes to generate detailed commit messages in imperative style. The message should be well-structured, include line breaks for multiple points, and may be up to 1000 characters long."
+    content: "You are an assistant that summarizes code changes to generate detailed commit messages in imperative style. The message should be well-structured, include line breaks for multiple points, and may be up to 1000 characters long. Do not add opinions or advice."
 )
 let userPrompt = Message(
     role: "user",
@@ -130,7 +130,7 @@ Here is the diff of staged changes:
 ```
 \(diff)
 ```
-Generate a detailed commit message covering all key changes. Use paragraphs or line breaks if there are multiple items, and ensure the message is well-structured, up to 1000 characters.
+Generate a detailed commit message covering all key changes. Use paragraphs or line breaks if there are multiple items, and ensure the message is well-structured, up to 1000 characters. Do not add opinions or advice.
 """
 )
 let chatReq = ChatRequest(

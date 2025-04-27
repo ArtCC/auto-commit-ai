@@ -16,7 +16,37 @@ A Git hook for macOS that automatically generates detailed, well-structured comm
 - Git 2.x or later.
 - OpenAI API key.
 
-## Installation
+## Global Installation
+
+Optional: To apply this hook to all your Git repositories without copying it manually into each .git/hooks folder, follow these steps:
+
+1. **Create a directory for global hooks:
+   ```bash
+   mkdir -p ~/.ai-githooks
+   ```
+2. **Copy the hook script into that directory:
+   ```bash
+   cp auto-commit-ai/prepare-commit-msg ~/.ai-githooks/prepare-commit-msg
+   ```
+3. **Make it executable:
+   ```bash
+   chmod +x ~/.ai-githooks/prepare-commit-msg
+   ```
+4. **Configure Git to use your global hooks directory:
+   ```bash
+   git config --global core.hooksPath ~/.ai-githooks
+   ```
+5. **Insert your OpenAI API key in the script (only once inside ~/.ai-githooks/prepare-commit-msg):
+   ```bash
+   let finalKey = "YOUR_API_KEY_HERE"
+   ```
+
+Optional: To revert to the default Git hooks behavior:
+   ```bash
+   git config --global --unset core.hooksPath
+   ```
+
+## Installation in project repository
 
 1. **Clone this repository** into your project:
    ```bash
@@ -65,9 +95,9 @@ A Git hook for macOS that automatically generates detailed, well-structured comm
    git commit
    ```
 4. The hook will send the staged diff to OpenAI and prepend the generated message to `COMMIT_EDITMSG`.
-5. Inspect the log for details or errors:
+5. Inspect the log for details or errors on installation folder:
    ```bash
-   cat .git/hooks/prepare-commit-msg.log
+   cat prepare-commit-msg.log
    ```
 
 ## Repository Structure
@@ -76,6 +106,7 @@ A Git hook for macOS that automatically generates detailed, well-structured comm
 auto-commit-ai/
 ├── prepare-commit-msg      # Swift hook script
 └── README.md               # Project documentation
+└── LICENSE                 # Project license
 ```
 
 ## Contributing
