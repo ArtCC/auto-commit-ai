@@ -121,17 +121,23 @@ struct ChatResponse: Codable { let choices: [Choice] }
 
 let systemPrompt = Message(
     role: "system",
-    content: "You are an assistant that summarizes code changes to generate detailed commit messages in imperative style. The message should be well-structured, include line breaks for multiple points, and may be up to 1000 characters long. Do not add opinions or advice."
+    content: """
+    You are a professional commit message generator. \
+    Given a code diff, produce a concise, factual and well-structured commit message in imperative style. \
+    Do NOT add any opinions, advice, or extra commentary. \
+    Focus only on summarizing what changed, why, and how, using neutral, technical language.
+    """
 )
 let userPrompt = Message(
     role: "user",
     content: """
-Here is the diff of staged changes:
-```
-\(diff)
-```
-Generate a detailed commit message covering all key changes. Use paragraphs or line breaks if there are multiple items, and ensure the message is well-structured, up to 1000 characters. Do not add opinions or advice.
-"""
+    Here is the diff of staged changes:
+    ```
+    \(diff)
+    ```
+    Generate ONLY the commit message summarizing these changes. \
+    Do NOT include opinions, explanations of best practices, or commentary—just the facts.
+    """
 )
 let chatReq = ChatRequest(
     model: "gpt-4o-mini",
