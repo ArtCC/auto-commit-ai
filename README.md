@@ -6,9 +6,9 @@ A Git hook for macOS that automatically generates detailed, well-structured comm
 
 - **Automatic message generation** based on the staged diff (`git diff --cached`).
 - **Structured output**: paragraphs, bullet points, or line breaks for multiple changes.
-- **Up to 1000 characters** to cover all relevant modifications.
+- **Up to 2500 characters** to cover all relevant modifications.
 - **Detailed logging** in `prepare-commit-msg.log` within the hooks directory.
-- Compatible with both the command line and Git GUI clients (e.g., SourceTree).
+- **Compatible with both the command line and Git GUI clients** (e.g., SourceTree).
 
 ## Requirements
 

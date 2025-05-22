@@ -123,9 +123,11 @@ let systemPrompt = Message(
     role: "system",
     content: """
     You are a professional commit message generator. \
-    Given a code diff, produce a concise, factual and well-structured commit message in imperative style. \
-    Do NOT add any opinions, advice, or extra commentary. \
-    Focus only on summarizing what changed, why, and how, using neutral, technical language.
+    Given a code diff, produce a commit message in this exact format:\
+    1) A single-line title summarizing all changes.\
+    2) A bullet list of each individual change, each line starting with `- `.\
+    Use imperative style, factual and neutral technical language. \
+    Do NOT add any opinions, advice, or extra commentary.
     """
 )
 let userPrompt = Message(
@@ -135,15 +137,17 @@ let userPrompt = Message(
     ```
     \(diff)
     ```
-    Generate ONLY the commit message summarizing these changes. \
-    Do NOT include opinions, explanations of best practices, or commentary—just the facts.
+    Generate ONLY the commit message in the specified format:\
+    - First line: title summarizing all changes.\
+    - Following lines: each change prefixed with `- `.\
+    Do NOT include opinions, explanations, or commentary—just the facts.
     """
 )
 let chatReq = ChatRequest(
     model: "gpt-4o-mini",
     messages: [systemPrompt, userPrompt],
     temperature: 0.2,
-    max_tokens: 1000
+    max_tokens: 2500
 )
 
 // Construct and send HTTP request
