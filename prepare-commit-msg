@@ -194,7 +194,7 @@ let task = URLSession.shared.dataTask(with: request) { data, resp, err in
 
 task.resume()
 
-if sem.wait(timeout: .now() + 15) == .timedOut {
+if sem.wait(timeout: .now() + 45) == .timedOut {
     log("OpenAI request timed out.")
 }
 
