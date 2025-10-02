@@ -1,6 +1,6 @@
 # Auto Commit AI
 
-A Git hook for macOS that automatically generates detailed, well-structured commit messages using the OpenAI API (model `gpt-4o-mini`). Perfect for maintaining a clear and consistent commit history without manual effort.
+A Git hook for macOS that automatically generates detailed, well-structured commit messages using the OpenAI API (model `gpt-4.1-mini`). Perfect for maintaining a clear and consistent commit history without manual effort.
 
 ## Features
 
@@ -81,7 +81,7 @@ Optional: To revert to the default Git hooks behavior:
   #!/usr/bin/env swift
   ```
 - Adjust the **timeout** by modifying the `sem.wait(timeout: .now() + 15)` value.
-- Switch to a different OpenAI model by updating `model: "gpt-4o-mini"`.
+- Switch to a different OpenAI model by updating `model: "gpt-4.1-mini"`.
 
 ## Usage
 
