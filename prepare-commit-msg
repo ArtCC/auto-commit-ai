@@ -39,7 +39,7 @@ func shell(_ args: String...) -> (output: String, status: Int32) {
     let pipe = Pipe()
     task.standardOutput = pipe
     task.standardError = pipe
-    task.launch()
+    try? task.run()
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
 
@@ -98,7 +98,7 @@ log("Staged diff obtained (first 500 chars): \(diff.prefix(500))")
 // Replace "YOUR_API_KEY_HERE" with your actual OpenAI API key
 let finalKey = "YOUR_API_KEY_HERE"
 
-if finalKey.isEmpty {
+if finalKey.isEmpty || finalKey == "YOUR_API_KEY_HERE" {
     log("Error: API key not set in script.")
 
     fputs("Error: edit the script and insert your API key in the finalKey variable.\n", stderr)
