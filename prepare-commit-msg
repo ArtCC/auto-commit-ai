@@ -2,225 +2,342 @@
 
 import Foundation
 
-// MARK: — Logging function
+// MARK: - Configuration
 
-// Determine the directory of the hook script
-let scriptPath = URL(fileURLWithPath: CommandLine.arguments[0])
+let environment = ProcessInfo.processInfo.environment
+
+let model = environment["AUTO_COMMIT_AI_MODEL"] ?? "gpt-5.4-mini"
+let timeoutSeconds = TimeInterval(environment["AUTO_COMMIT_AI_TIMEOUT"] ?? "30") ?? 30
+let maxDiffCharacters = Int(environment["AUTO_COMMIT_AI_MAX_DIFF_CHARS"] ?? "60000") ?? 60000
+let maxTokens = Int(environment["AUTO_COMMIT_AI_MAX_TOKENS"] ?? "1200") ?? 1200
+let fallbackMessage = environment["AUTO_COMMIT_AI_FALLBACK_MESSAGE"] ?? "Update changes"
+let shouldLogDiff = ["1", "true", "yes"].contains((environment["AUTO_COMMIT_AI_LOG_DIFF"] ?? "").lowercased())
+let keychainService = environment["AUTO_COMMIT_AI_KEYCHAIN_SERVICE"] ?? "auto-commit-ai-openai-api-key"
+
+let args = CommandLine.arguments
+let scriptPath = URL(fileURLWithPath: args.first ?? "prepare-commit-msg")
 let hookDirectory = scriptPath.deletingLastPathComponent()
 let logURL = hookDirectory.appendingPathComponent("prepare-commit-msg.log")
 
-func log(_ msg: String) {
+// MARK: - Logging
+
+func log(_ message: String) {
     let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(msg)\n"
-   
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logURL.path) {
-            if let handle = try? FileHandle(forWritingTo: logURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: logURL)
-        }
+    guard let data = "[\(timestamp)] \(message)\n".data(using: .utf8) else { return }
+
+    if FileManager.default.fileExists(atPath: logURL.path),
+       let handle = try? FileHandle(forWritingTo: logURL) {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        try? handle.close()
+    } else {
+        try? data.write(to: logURL, options: .atomic)
     }
 }
 
-// MARK: — Command execution helper
+func warnAndContinue(_ message: String) -> Never {
+    log(message)
+    fputs("auto-commit-ai: \(message)\n", stderr)
+    exit(0)
+}
+
+func hasUserVisibleCommitContent(_ message: String) -> Bool {
+    message
+        .components(separatedBy: .newlines)
+        .contains { line in
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmedLine.isEmpty && !trimmedLine.hasPrefix("#")
+        }
+}
+
+func warnAndUseFallback(_ message: String, commitMessagePath: String) -> Never {
+    log(message)
+    fputs("auto-commit-ai: \(message); using fallback commit message\n", stderr)
+
+    do {
+        let originalMessage = try String(contentsOfFile: commitMessagePath, encoding: .utf8)
+        if hasUserVisibleCommitContent(originalMessage) {
+            log("Fallback skipped because commit message already has content.")
+            exit(0)
+        }
+
+        let fallback = fallbackMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallback.isEmpty else {
+            log("Fallback skipped because AUTO_COMMIT_AI_FALLBACK_MESSAGE is empty.")
+            exit(0)
+        }
+
+        let newMessage = fallback + "\n\n" + originalMessage
+        try newMessage.write(toFile: commitMessagePath, atomically: true, encoding: .utf8)
+        log("Fallback commit message written successfully.")
+        exit(0)
+    } catch {
+        log("Failed to write fallback commit message: \(error.localizedDescription)")
+        exit(0)
+    }
+}
+
+// MARK: - Shell Helpers
 
 @discardableResult
-func shell(_ args: String...) -> (output: String, status: Int32) {
-    log("Running command: \(args.joined(separator: " "))")
-
+func shell(_ arguments: [String], logOutput: Bool = false) -> (output: String, status: Int32) {
     let task = Process()
-    task.launchPath = "/usr/bin/env"
-    task.arguments = args
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    task.arguments = arguments
 
     let pipe = Pipe()
     task.standardOutput = pipe
     task.standardError = pipe
-    try? task.run()
+
+    do {
+        try task.run()
+    } catch {
+        log("Failed to run command '\(arguments.joined(separator: " "))': \(error.localizedDescription)")
+        return ("", 1)
+    }
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-
     task.waitUntilExit()
 
     let output = String(decoding: data, as: UTF8.self)
-
-    log("Command finished with status \(task.terminationStatus); output prefix: \(output.prefix(200))")
+    let outputInfo = logOutput ? "; output prefix: \(output.prefix(200))" : ""
+    log("Command '\(arguments.joined(separator: " "))' finished with status \(task.terminationStatus)\(outputInfo)")
 
     return (output, task.terminationStatus)
 }
 
-// MARK: — 1) Read arguments
+func keychainAPIKey() -> String? {
+    let result = shell([
+        "security", "find-generic-password",
+        "-a", NSUserName(),
+        "-s", keychainService,
+        "-w"
+    ])
 
-let args = CommandLine.arguments
+    guard result.status == 0 else { return nil }
 
-log("Received arguments: \(args)")
+    let key = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return key.isEmpty ? nil : key
+}
+
+func openAIAPIKey() -> String? {
+    if let key = environment["OPENAI_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+        return key
+    }
+
+    return keychainAPIKey()
+}
+
+// MARK: - Git Hook Inputs
+
+log("Hook started with \(max(args.count - 1, 0)) argument(s).")
 
 guard args.count >= 2 else {
-    log("Error: insufficient number of arguments.")
-    exit(1)
+    warnAndContinue("missing commit message path")
 }
 
-let commitMsgPath = args[1]
-let commitSource  = args.count > 2 ? args[2] : ""
+let commitMessagePath = args[1]
+let commitSource = args.count > 2 ? args[2] : ""
 
-log("commitMsgPath = \(commitMsgPath), commitSource = \(commitSource)")
-
-// Skip specific commit sources (merge, squash, amend)
-let skipSources: Set<String> = ["merge", "squash", "commit"]
-
-if skipSources.contains(commitSource) {
-    log("Commit source '\(commitSource)' not processable, exiting.")
-
+// Respect commits where Git already has a message or is preserving existing history.
+// Do not skip "template": Git uses it before the editor opens, so the hook can still
+// generate a useful message above the template content.
+let skippedSources: Set<String> = ["message", "merge", "squash", "commit"]
+if skippedSources.contains(commitSource) {
+    log("Skipping commit source '\(commitSource)'.")
     exit(0)
 }
 
-// MARK: — 2) Get staged diff
+// MARK: - Diff Collection
 
-let (diff, status) = shell("git", "diff", "--cached")
-
-guard status == 0 else {
-    log("Error getting diff: status \(status)")
-    exit(1)
+let diffResult = shell(["git", "diff", "--cached", "--no-ext-diff"])
+guard diffResult.status == 0 else {
+    warnAndContinue("could not read staged diff")
 }
 
-guard !diff.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-    log("No staged changes; exiting.")
+let diff = diffResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+guard !diff.isEmpty else {
+    log("No staged changes found.")
     exit(0)
 }
 
-log("Staged diff obtained (first 500 chars): \(diff.prefix(500))")
-
-// MARK: — 3) Embedded API key
-
-// Replace "YOUR_API_KEY_HERE" with your actual OpenAI API key
-let finalKey = "YOUR_API_KEY_HERE"
-
-if finalKey.isEmpty || finalKey == "YOUR_API_KEY_HERE" {
-    log("Error: API key not set in script.")
-
-    fputs("Error: edit the script and insert your API key in the finalKey variable.\n", stderr)
-
-    exit(1)
+let diffForPrompt: String
+if diff.count > maxDiffCharacters {
+    let endIndex = diff.index(diff.startIndex, offsetBy: maxDiffCharacters)
+    diffForPrompt = String(diff[..<endIndex]) + "\n\n[Diff truncated at \(maxDiffCharacters) characters.]"
+    log("Staged diff truncated from \(diff.count) to \(maxDiffCharacters) characters.")
+} else {
+    diffForPrompt = diff
+    log("Staged diff collected with \(diff.count) characters.")
 }
 
-log("API key loaded from script.")
+if shouldLogDiff {
+    log("Diff logging enabled by AUTO_COMMIT_AI_LOG_DIFF. Diff prefix: \(diffForPrompt.prefix(1000))")
+}
 
-// Prepare OpenAI request
-struct Message: Codable { let role: String; let content: String }
-struct ChatRequest: Codable {
+guard let apiKey = openAIAPIKey() else {
+    warnAndUseFallback(
+        "missing OpenAI API key; set OPENAI_API_KEY or store it in macOS Keychain service '\(keychainService)'",
+        commitMessagePath: commitMessagePath
+    )
+}
+
+// MARK: - OpenAI Request
+
+struct ResponsesRequest: Codable {
+    struct Reasoning: Codable {
+        let effort: String
+    }
+
     let model: String
-    let messages: [Message]
-    let temperature: Double
-    let max_tokens: Int
+    let instructions: String
+    let input: String
+    let reasoning: Reasoning
+    let max_output_tokens: Int
 }
-struct Choice: Codable { struct Inner: Codable { let content: String } ; let message: Inner }
-struct ChatResponse: Codable { let choices: [Choice] }
 
-let systemPrompt = Message(
-    role: "system",
-    content: """
-    You are a professional commit message generator. \
-    Given a code diff, produce a commit message in this exact format:\
-    1) A single-line title summarizing all changes.\
-    2) A bullet list of each individual change, each line starting with `- `.\
-    Use imperative style, factual and neutral technical language. \
-    Do NOT add any opinions, advice, or extra commentary.
-    """
-)
-let userPrompt = Message(
-    role: "user",
-    content: """
-    Here is the diff of staged changes:
-    ```
-    \(diff)
-    ```
-    Generate ONLY the commit message in the specified format:\
-    - First line: title summarizing all changes.\
-    - Following lines: each change prefixed with `- `.\
-    Do NOT include opinions, explanations, or commentary—just the facts.
-    """
-)
-let chatReq = ChatRequest(
-    model: "gpt-4.1-mini",
-    messages: [systemPrompt, userPrompt],
-    temperature: 0,
-    max_tokens: 5000
+struct ResponsesResponse: Codable {
+    struct OutputItem: Codable {
+        struct ContentItem: Codable {
+            let type: String?
+            let text: String?
+        }
+
+        let type: String?
+        let content: [ContentItem]?
+    }
+
+    let output_text: String?
+    let output: [OutputItem]?
+
+    var textOutput: String? {
+        if let outputText = output_text?.trimmingCharacters(in: .whitespacesAndNewlines), !outputText.isEmpty {
+            return outputText
+        }
+
+        let text = output?
+            .flatMap { $0.content ?? [] }
+            .compactMap { $0.text }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return text?.isEmpty == false ? text : nil
+    }
+}
+
+struct ErrorResponse: Codable {
+    struct APIError: Codable {
+        let message: String
+    }
+
+    let error: APIError
+}
+
+let instructions = """
+You generate concise Git commit messages from staged diffs.
+Return only the commit message.
+Format:
+First line: imperative title, maximum 72 characters, no trailing period.
+Blank line.
+Bullet list: each relevant change starts with "- ".
+Use factual, neutral, technical language.
+Do not mention AI, prompts, advice, uncertainty, or explanations.
+"""
+
+let input = """
+Generate a commit message for this staged diff:
+
+```diff
+\(diffForPrompt)
+```
+"""
+
+let responsesRequest = ResponsesRequest(
+    model: model,
+    instructions: instructions,
+    input: input,
+    reasoning: .init(effort: "low"),
+    max_output_tokens: maxTokens
 )
 
-// Construct and send HTTP request
-guard let url = URL(string: "https://api.openai.com/v1/chat/completions"),
-      let body = try? JSONEncoder().encode(chatReq) else {
-    log("Error: failed to create URL or encode request body.")
-
-    exit(1)
+guard let url = URL(string: "https://api.openai.com/v1/responses"),
+      let body = try? JSONEncoder().encode(responsesRequest) else {
+    warnAndUseFallback("could not create OpenAI request", commitMessagePath: commitMessagePath)
 }
 
 var request = URLRequest(url: url)
 request.httpMethod = "POST"
-request.setValue("Bearer \(finalKey)", forHTTPHeaderField: "Authorization")
+request.timeoutInterval = timeoutSeconds
+request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 request.httpBody = body
 
-log("Sending request to OpenAI…")
+let semaphore = DispatchSemaphore(value: 0)
+var generatedMessage: String?
+var requestFailure: String?
 
-let sem = DispatchSemaphore(value: 0)
+let requestTask = URLSession.shared.dataTask(with: request) { data, response, error in
+    defer { semaphore.signal() }
 
-var generatedSummary: String?
-
-let task = URLSession.shared.dataTask(with: request) { data, resp, err in
-    defer { sem.signal() }
-
-    if let err = err {
-        log("Request error: \(err.localizedDescription)")
-
+    if let error {
+        requestFailure = error.localizedDescription
         return
     }
 
-    guard let data = data,
-          let chatResp = try? JSONDecoder().decode(ChatResponse.self, from: data),
-          let text = chatResp.choices.first?.message.content else {
-        log("Error parsing OpenAI response.")
-
+    guard let httpResponse = response as? HTTPURLResponse else {
+        requestFailure = "missing HTTP response"
         return
     }
 
-    generatedSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let data else {
+        requestFailure = "empty OpenAI response"
+        return
+    }
 
-    log("Generated summary (first 200 chars): \(generatedSummary!.prefix(200))")
+    guard (200..<300).contains(httpResponse.statusCode) else {
+        if let apiError = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+            requestFailure = "OpenAI HTTP \(httpResponse.statusCode): \(apiError.error.message)"
+        } else {
+            requestFailure = "OpenAI HTTP \(httpResponse.statusCode)"
+        }
+        return
+    }
+
+    guard let responsesResponse = try? JSONDecoder().decode(ResponsesResponse.self, from: data),
+          let content = responsesResponse.textOutput,
+          !content.isEmpty else {
+        requestFailure = "could not parse OpenAI response"
+        return
+    }
+
+    generatedMessage = content
 }
 
-task.resume()
+log("Sending request to OpenAI with model '\(model)'.")
+requestTask.resume()
 
-if sem.wait(timeout: .now() + 45) == .timedOut {
-    log("OpenAI request timed out.")
+if semaphore.wait(timeout: .now() + timeoutSeconds) == .timedOut {
+    requestTask.cancel()
+    warnAndUseFallback("OpenAI request timed out after \(Int(timeoutSeconds)) seconds", commitMessagePath: commitMessagePath)
 }
 
-// MARK: — 4) Prepend to commit message
-guard let summary = generatedSummary, !summary.isEmpty else {
-    log("No summary generated; exiting.")
-
-    exit(0)
+if let requestFailure {
+    warnAndUseFallback(requestFailure, commitMessagePath: commitMessagePath)
 }
+
+guard let generatedMessage else {
+    warnAndUseFallback("OpenAI did not generate a commit message", commitMessagePath: commitMessagePath)
+}
+
+// MARK: - Commit Message Update
 
 do {
-    log("Reading original commit message.")
-
-    let original = try String(contentsOfFile: commitMsgPath, encoding: .utf8)
-    let newMsg = summary +
-    "\n\n" + original
-
-    log("Writing new commit message.")
-
-    try newMsg.write(toFile: commitMsgPath, atomically: true, encoding: .utf8)
-
+    let originalMessage = try String(contentsOfFile: commitMessagePath, encoding: .utf8)
+    let newMessage = generatedMessage + "\n\n" + originalMessage
+    try newMessage.write(toFile: commitMessagePath, atomically: true, encoding: .utf8)
     log("Commit message updated successfully.")
 } catch {
-    log("Error writing commit message: \(error.localizedDescription)")
-
-    fputs("Error writing commit message: \(error)\n", stderr)
-
+    log("Failed to update commit message: \(error.localizedDescription)")
+    fputs("auto-commit-ai: failed to update commit message: \(error.localizedDescription)\n", stderr)
     exit(1)
 }

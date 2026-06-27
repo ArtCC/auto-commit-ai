@@ -1,127 +1,169 @@
 # Auto Commit AI
 
-A Git hook for macOS that automatically generates detailed, well-structured commit messages using the OpenAI API (model `gpt-4.1-mini`). Perfect for maintaining a clear and consistent commit history without manual effort.
+Git hook for macOS that generates commit messages from your staged diff using OpenAI's Responses API.
+
+The hook is designed for local use: it keeps your API key out of the script, avoids logging diffs by default, and never blocks a commit if the AI request fails.
 
 ## Features
 
-- **Automatic message generation** based on the staged diff (`git diff --cached`).
-- **Structured output**: paragraphs, bullet points, or line breaks for multiple changes.
-- **Up to 2500 characters** to cover all relevant modifications.
-- **Detailed logging** in `prepare-commit-msg.log` within the hooks directory.
-- **Compatible with both the command line and Git GUI clients** (e.g., SourceTree: create commit with empty text).
+- Generates a commit message from `git diff --cached`.
+- Uses OpenAI's current `/v1/responses` endpoint.
+- Uses a concise format: title plus bullet list.
+- Reads the OpenAI key from `OPENAI_API_KEY` or macOS Keychain.
+- Skips manual, merge, squash, and amend commits.
+- Limits large diffs before sending them to OpenAI.
+- Writes `Update changes` as a fallback if AI generation fails and the commit message is empty.
+- Writes diagnostic logs to `prepare-commit-msg.log` next to the installed hook.
+- Does not log diff contents unless explicitly enabled.
 
 ## Requirements
 
-- macOS with Swift installed (Xcode or Command Line Tools).
+- macOS.
+- Xcode or Command Line Tools with Swift available through `xcrun swift`.
 - Git 2.x or later.
 - OpenAI API key.
 
-## Global Installation
+## Recommended Local Installation
 
-Optional: To apply this hook to all your Git repositories without copying it manually into each .git/hooks folder, follow these steps:
+Use a global Git hooks directory if you want the hook available in all local repositories.
 
-1. **Create a directory for global hooks:
+1. Create a hooks directory:
+
    ```bash
    mkdir -p ~/.ai-githooks
    ```
-2. **Copy the hook script into that directory:
+
+2. Copy the hook:
+
    ```bash
-   cp auto-commit-ai/prepare-commit-msg ~/.ai-githooks/prepare-commit-msg
+   cp prepare-commit-msg ~/.ai-githooks/prepare-commit-msg
    ```
-3. **Make it executable:
+
+3. Make it executable:
+
    ```bash
    chmod +x ~/.ai-githooks/prepare-commit-msg
    ```
-4. **Configure Git to use your global hooks directory:
+
+4. Configure Git to use that directory:
+
    ```bash
    git config --global core.hooksPath ~/.ai-githooks
    ```
-5. **Insert your OpenAI API key in the script (only once inside ~/.ai-githooks/prepare-commit-msg):
-   ```bash
-   let finalKey = "YOUR_API_KEY_HERE"
-   ```
 
-Optional: To revert to the default Git hooks behavior:
-   ```bash
-   git config --global --unset core.hooksPath
-   ```
-
-## Installation in project repository
-
-1. **Clone this repository** into your project:
-   ```bash
-   git clone https://github.com/your-username/auto-commit-ai.git
-   ```
+5. Store your API key in macOS Keychain:
 
    ```bash
-   git@github.com:ArtCC/auto-commit-ai.git
-   ```
-2. **Copy the hook** into your repo’s hooks folder:
-   ```bash
-   cp auto-commit-ai/prepare-commit-msg .git/hooks/prepare-commit-msg
+   security add-generic-password \
+     -a "$USER" \
+     -s auto-commit-ai-openai-api-key \
+     -w "YOUR_OPENAI_API_KEY" \
+     -U
    ```
 
-   ```bash
-   rm -rf auto-commit-ai
-   ```
-3. **Make it executable**:
-   ```bash
-   chmod +x .git/hooks/prepare-commit-msg
-   ```
-4. **Insert your OpenAI API key** in the script:
-   ```swift
-   // Inside .git/hooks/prepare-commit-msg
-   let finalKey = "YOUR_API_KEY_HERE"
-   ```
+To disable the global hook later:
+
+```bash
+git config --global --unset core.hooksPath
+```
+
+## Per-Repository Installation
+
+Use this if you only want the hook in one repository.
+
+```bash
+cp prepare-commit-msg /path/to/your/repo/.git/hooks/prepare-commit-msg
+chmod +x /path/to/your/repo/.git/hooks/prepare-commit-msg
+```
+
+Then configure the API key using either Keychain or `OPENAI_API_KEY`.
+
+## API Key Options
+
+### Option 1: macOS Keychain
+
+Recommended for normal local use:
+
+```bash
+security add-generic-password \
+  -a "$USER" \
+  -s auto-commit-ai-openai-api-key \
+  -w "YOUR_OPENAI_API_KEY" \
+  -U
+```
+
+### Option 2: Environment Variable
+
+Useful for terminal-only workflows:
+
+```bash
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+```
+
+For GUI Git clients, environment variables may not be available. Keychain is usually more reliable on macOS.
 
 ## Configuration
 
-- Change the **shebang** to your Swift interpreter if needed:
-  ```bash
-  #!/usr/bin/env swift
-  ```
-- Adjust the **timeout** by modifying the `sem.wait(timeout: .now() + 15)` value.
-- Switch to a different OpenAI model by updating `model: "gpt-4.1-mini"`.
+All configuration is optional and uses environment variables.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | unset | OpenAI API key. Used before Keychain if present. |
+| `AUTO_COMMIT_AI_MODEL` | `gpt-5.4-mini` | OpenAI model. |
+| `AUTO_COMMIT_AI_TIMEOUT` | `30` | Request timeout in seconds. |
+| `AUTO_COMMIT_AI_MAX_DIFF_CHARS` | `60000` | Maximum diff characters sent to OpenAI. |
+| `AUTO_COMMIT_AI_MAX_TOKENS` | `1200` | Maximum output tokens sent as `max_output_tokens`. |
+| `AUTO_COMMIT_AI_FALLBACK_MESSAGE` | `Update changes` | Message used if AI generation fails and the commit message is empty. |
+| `AUTO_COMMIT_AI_KEYCHAIN_SERVICE` | `auto-commit-ai-openai-api-key` | Keychain service name. |
+| `AUTO_COMMIT_AI_LOG_DIFF` | unset | Set to `true` only if you want diff snippets in the log. |
 
 ## Usage
 
-1. Make your code changes.
-2. Stage them:
+1. Stage your changes:
+
    ```bash
    git add .
    ```
-3. Commit as usual:
+
+2. Commit without providing a message:
+
    ```bash
    git commit
    ```
-4. The hook will send the staged diff to OpenAI and prepend the generated message to `COMMIT_EDITMSG`.
-5. Inspect the log for details or errors on installation folder:
-   ```bash
-   cat prepare-commit-msg.log
-   ```
+
+3. Review or edit the generated message in your Git editor.
+
+The hook intentionally skips `git commit -m "..."` so manual messages are respected. It does not skip Git templates, because those are loaded before the editor opens.
+
+## Logs
+
+The hook writes logs next to the installed script:
+
+```bash
+cat ~/.ai-githooks/prepare-commit-msg.log
+```
+
+Diff contents are not logged by default. Enable `AUTO_COMMIT_AI_LOG_DIFF=true` only for temporary debugging.
+
+## Privacy Notes
+
+The staged diff is sent to OpenAI. Do not use this hook for commits containing secrets or code that cannot leave your machine.
+
+The hook limits large diffs, but it does not redact secrets automatically.
 
 ## Repository Structure
 
-```
+```text
 auto-commit-ai/
-├── prepare-commit-msg      # Swift hook script
-└── README.md               # Project documentation
-└── LICENSE                 # Project license
+├── prepare-commit-msg
+├── README.md
+└── LICENSE
 ```
-
-## Contributing
-
-Contributions are welcome! Please:
-
-- Open issues to report bugs or suggest enhancements.
-- Submit pull requests with new features or fixes.
-
-Ensure your code follows the established Swift style and include tests or examples where appropriate.
 
 ## License
 
-[Apache License](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ---
 
-**Arturo Carretero Calvo - 2025**
+Arturo Carretero Calvo - 2026
