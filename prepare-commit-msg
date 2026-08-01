@@ -140,9 +140,21 @@ let commitMessagePath = args[1]
 let commitSource = args.count > 2 ? args[2] : ""
 
 // Respect commits where Git already has a message or is preserving existing history.
+// Some GUI clients represent an empty message as `git commit -m ""`, which still
+// reports the source as "message". Only skip that source when it contains text.
+if commitSource == "message" {
+    let existingMessage = (try? String(contentsOfFile: commitMessagePath, encoding: .utf8)) ?? ""
+    if hasUserVisibleCommitContent(existingMessage) {
+        log("Skipping commit source 'message' because it already has content.")
+        exit(0)
+    }
+
+    log("Commit source 'message' is empty; continuing with AI generation.")
+}
+
 // Do not skip "template": Git uses it before the editor opens, so the hook can still
 // generate a useful message above the template content.
-let skippedSources: Set<String> = ["message", "merge", "squash", "commit"]
+let skippedSources: Set<String> = ["merge", "squash", "commit"]
 if skippedSources.contains(commitSource) {
     log("Skipping commit source '\(commitSource)'.")
     exit(0)

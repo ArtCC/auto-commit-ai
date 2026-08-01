@@ -133,7 +133,7 @@ All configuration is optional and uses environment variables.
 
 3. Review or edit the generated message in your Git editor.
 
-The hook intentionally skips `git commit -m "..."` so manual messages are respected. It does not skip Git templates, because those are loaded before the editor opens.
+The hook skips `git commit -m "..."` when the message is non-empty so manual messages are respected. An empty `git commit -m ""`, as used by some GUI clients such as SourceTree, is treated as no message and receives an AI-generated message. It does not skip Git templates, because those are loaded before the editor opens.
 
 ## Logs
 
