@@ -50,13 +50,22 @@ func hasUserVisibleCommitContent(_ message: String) -> Bool {
         }
 }
 
+func isSourceTreeEmptyMessage(_ message: String) -> Bool {
+    let visibleLines = message
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+
+    return visibleLines.count == 1 && visibleLines[0].caseInsensitiveCompare("No message") == .orderedSame
+}
+
 func warnAndUseFallback(_ message: String, commitMessagePath: String) -> Never {
     log(message)
     fputs("auto-commit-ai: \(message); using fallback commit message\n", stderr)
 
     do {
         let originalMessage = try String(contentsOfFile: commitMessagePath, encoding: .utf8)
-        if hasUserVisibleCommitContent(originalMessage) {
+        if hasUserVisibleCommitContent(originalMessage) && !isSourceTreeEmptyMessage(originalMessage) {
             log("Fallback skipped because commit message already has content.")
             exit(0)
         }
@@ -67,7 +76,8 @@ func warnAndUseFallback(_ message: String, commitMessagePath: String) -> Never {
             exit(0)
         }
 
-        let newMessage = fallback + "\n\n" + originalMessage
+        let preservedMessage = isSourceTreeEmptyMessage(originalMessage) ? "" : originalMessage
+        let newMessage = fallback + "\n\n" + preservedMessage
         try newMessage.write(toFile: commitMessagePath, atomically: true, encoding: .utf8)
         log("Fallback commit message written successfully.")
         exit(0)
@@ -144,7 +154,7 @@ let commitSource = args.count > 2 ? args[2] : ""
 // reports the source as "message". Only skip that source when it contains text.
 if commitSource == "message" {
     let existingMessage = (try? String(contentsOfFile: commitMessagePath, encoding: .utf8)) ?? ""
-    if hasUserVisibleCommitContent(existingMessage) {
+    if hasUserVisibleCommitContent(existingMessage) && !isSourceTreeEmptyMessage(existingMessage) {
         log("Skipping commit source 'message' because it already has content.")
         exit(0)
     }
@@ -345,7 +355,8 @@ guard let generatedMessage else {
 
 do {
     let originalMessage = try String(contentsOfFile: commitMessagePath, encoding: .utf8)
-    let newMessage = generatedMessage + "\n\n" + originalMessage
+    let preservedMessage = isSourceTreeEmptyMessage(originalMessage) ? "" : originalMessage
+    let newMessage = generatedMessage + "\n\n" + preservedMessage
     try newMessage.write(toFile: commitMessagePath, atomically: true, encoding: .utf8)
     log("Commit message updated successfully.")
 } catch {
